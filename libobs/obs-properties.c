@@ -306,6 +306,7 @@ static inline size_t get_property_size(enum obs_property_type type)
 	case OBS_PROPERTY_EDITABLE_LIST:
 		return sizeof(struct editable_list_data);
 	case OBS_PROPERTY_FRAME_RATE:return sizeof(struct frame_rate_data);
+	case OBS_PROPERTY_DICTIONARY:return 0;
 	}
 
 	return 0;
@@ -529,6 +530,17 @@ obs_property_t *obs_properties_add_frame_rate(obs_properties_t *props,
 	struct frame_rate_data *data = get_property_data(p);
 	da_init(data->extra_options);
 	da_init(data->ranges);
+	return p;
+}
+
+obs_property_t *obs_properties_add_dictionary(obs_properties_t *props,
+		const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name)) return NULL;
+
+	struct obs_property *p = new_prop(props, name, desc,
+		OBS_PROPERTY_DICTIONARY);
+
 	return p;
 }
 

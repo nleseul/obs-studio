@@ -55,6 +55,7 @@ enum obs_property_type {
 	OBS_PROPERTY_FONT,
 	OBS_PROPERTY_EDITABLE_LIST,
 	OBS_PROPERTY_FRAME_RATE,
+	OBS_PROPERTY_DICTIONARY,
 };
 
 enum obs_combo_format {
@@ -212,6 +213,9 @@ EXPORT obs_property_t *obs_properties_add_editable_list(obs_properties_t *props,
 		const char *default_path);
 
 EXPORT obs_property_t *obs_properties_add_frame_rate(obs_properties_t *props,
+		const char *name, const char *description);
+
+EXPORT obs_property_t *obs_properties_add_dictionary(obs_properties_t *props,
 		const char *name, const char *description);
 
 /* ------------------------------------------------------------------------- */
