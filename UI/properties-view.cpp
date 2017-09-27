@@ -18,11 +18,18 @@
 #include <QDialogButtonBox>
 #include <QMenu>
 #include <QStackedWidget>
+#include <QGridLayout>
+#include <QTableView>
+#include <QHeaderView>
+#include <QItemDelegate>
+#include <QPainter>
 #include "double-slider.hpp"
 #include "qt-wrappers.hpp"
 #include "properties-view.hpp"
 #include "properties-view.moc.hpp"
 #include "obs-app.hpp"
+
+#include "obs-dictionary.h"
 
 #include <cstdlib>
 #include <initializer_list>
@@ -83,8 +90,15 @@ struct common_frame_rate {
 
 }
 
+enum dictionary_column {
+	DICTIONARY_COLUMN_NAME,
+	DICTIONARY_COLUMN_TYPE,
+	DICTIONARY_COLUMN_VALUE
+};
+
 Q_DECLARE_METATYPE(frame_rate_tag);
 Q_DECLARE_METATYPE(media_frames_per_second);
+Q_DECLARE_METATYPE(obs_dictionary_entry_type);
 
 void OBSPropertiesView::ReloadProperties()
 {
@@ -1317,6 +1331,294 @@ void OBSPropertiesView::AddFrameRate(obs_property_t *prop, bool &warning,
 	});
 }
 
+class DictionaryItemTypeDelegate : public QItemDelegate {
+
+public:
+	virtual QWidget *createEditor(QWidget *parent,
+		const QStyleOptionViewItem & /* option */,
+		const QModelIndex & /* index */)
+		const override
+	{
+		QComboBox *combo = new QComboBox(parent);
+
+		for (obs_dictionary_entry_type type : {
+			OBS_DICTIONARY_ENTRY_STRING,
+			OBS_DICTIONARY_ENTRY_INT,
+			OBS_DICTIONARY_ENTRY_FLOAT,
+			OBS_DICTIONARY_ENTRY_BOOL,
+			OBS_DICTIONARY_ENTRY_COLOR
+		}) {
+			combo->addItem(EntryTypeToString(type), QVariant::fromValue(type));
+		}
+
+		return combo;
+	}
+
+	virtual void setEditorData(QWidget *editor, const QModelIndex &index)
+		const override {
+		QComboBox *combo = static_cast<QComboBox *>(editor);
+		QVariant data = index.data();
+		int comboIndex = combo->findData(data);
+
+		combo->setCurrentIndex(comboIndex);
+	}
+
+	virtual void setModelData(QWidget *editor,
+		QAbstractItemModel *model,
+		const QModelIndex &index) const override
+	{
+		QComboBox *combo = static_cast<QComboBox *>(editor);
+		QVariant data = combo->currentData();
+		model->setData(index, combo->currentData());
+	}
+
+	virtual void paint(QPainter *painter,
+		const QStyleOptionViewItem &option,
+		const QModelIndex &index) const override
+	{
+		obs_dictionary_entry_type type = index.model()->data(index)
+			.value<obs_dictionary_entry_type>();
+
+		drawDisplay(painter, option, option.rect, EntryTypeToString(type));
+		drawFocus(painter, option, option.rect);
+	}
+
+private:
+	static QString EntryTypeToString(obs_dictionary_entry_type type)
+	{
+		switch (type)
+		{
+		case OBS_DICTIONARY_ENTRY_STRING:
+			return QTStr("Basic.PropertiesWindow.DictionaryEntryType.String");
+		case OBS_DICTIONARY_ENTRY_INT:
+			return QTStr("Basic.PropertiesWindow.DictionaryEntryType.Int");
+		case OBS_DICTIONARY_ENTRY_FLOAT:
+			return QTStr("Basic.PropertiesWindow.DictionaryEntryType.Float");
+		case OBS_DICTIONARY_ENTRY_BOOL:
+			return QTStr("Basic.PropertiesWindow.DictionaryEntryType.Bool");
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			return QTStr("Basic.PropertiesWindow.DictionaryEntryType.Color");
+		}
+
+		return "";
+	}
+
+};
+
+class DictionaryItemValueDelegate : public QItemDelegate {
+	virtual QWidget *createEditor(QWidget *parent,
+		const QStyleOptionViewItem & /* option */, const QModelIndex &index)
+		const override
+	{
+		QModelIndex typeIndex = index.model()->index(index.row(),
+			DICTIONARY_COLUMN_TYPE);
+		obs_dictionary_entry_type type = typeIndex.model()->data(typeIndex)
+			.value<obs_dictionary_entry_type>();
+
+		QWidget *valueControl = NULL;
+
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_STRING:
+			valueControl = new QLineEdit(parent);
+			break;
+
+		case OBS_DICTIONARY_ENTRY_INT:
+			valueControl = new QSpinBox(parent);
+			break;
+
+		case OBS_DICTIONARY_ENTRY_FLOAT:
+			valueControl = new QDoubleSpinBox(parent);
+			break;
+
+		case OBS_DICTIONARY_ENTRY_BOOL:
+			valueControl = new QCheckBox(parent);
+			break;
+
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			valueControl = new QColorDialog(parent);
+			break;
+		}
+
+		return valueControl;
+	}
+
+	virtual void setEditorData(QWidget *editor, const QModelIndex &index)
+		const override {
+		QModelIndex typeIndex = index.model()->index(index.row(),
+			DICTIONARY_COLUMN_TYPE);
+		obs_dictionary_entry_type type = typeIndex.model()->data(typeIndex)
+			.value<obs_dictionary_entry_type>();
+		QVariant data = index.data();
+
+		editor->setAutoFillBackground(true);
+
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			static_cast<QColorDialog *>(editor)->setCurrentColor(
+				color_from_int(data.toInt()));
+			break;
+		default:
+			QItemDelegate::setEditorData(editor, index);
+			break;
+		}
+	}
+
+	virtual void setModelData(QWidget *editor,
+		QAbstractItemModel *model,
+		const QModelIndex &index) const override
+	{
+		QModelIndex typeIndex = index.model()->index(index.row(),
+			DICTIONARY_COLUMN_TYPE);
+		obs_dictionary_entry_type type = typeIndex.model()->data(typeIndex)
+			.value<obs_dictionary_entry_type>();
+
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			model->setData(index,
+				color_to_int(
+					static_cast<QColorDialog *>(editor)->currentColor()));
+			break;
+		default:
+			QItemDelegate::setModelData(editor, model, index);
+			break;
+		}
+	}
+
+	virtual void paint(QPainter *painter,
+		const QStyleOptionViewItem &option,
+		const QModelIndex &index) const override
+	{
+		QModelIndex typeIndex = index.model()->index(index.row(),
+			DICTIONARY_COLUMN_TYPE);
+		obs_dictionary_entry_type type = typeIndex.model()->data(typeIndex)
+			.value<obs_dictionary_entry_type>();
+
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			PaintColor(painter, option, index);
+			break;
+		default:
+			QItemDelegate::paint(painter, option, index);
+			break;
+		}
+	}
+
+	void PaintColor(QPainter *painter,
+		const QStyleOptionViewItem &option,
+		const QModelIndex &index) const
+	{
+		QVariant data = index.model()->data(index);
+		QColor color = color_from_int(data.toInt());
+
+		// Determine whether we should use black or white text to contrast with
+		// the background, based on the perceived brightness of the color.
+		// From http://alienryderflex.com/hsp.html:
+		qreal perceivedBrightnessSquared =
+			color.redF() * color.redF() * 0.299 +
+			color.greenF() * color.greenF() * 0.587 +
+			color.blueF() * color.blueF() * 0.114;
+
+		QStyleOptionViewItem localOption = option;
+		if (perceivedBrightnessSquared > 0.5 * 0.5) {
+			localOption.palette.setColor(QPalette::Text, QColor("black"));
+		}
+		else {
+			localOption.palette.setColor(QPalette::Text, QColor("white"));
+		}
+
+		painter->fillRect(localOption.rect, color);
+		drawDisplay(painter, localOption, localOption.rect, color.name());
+		drawFocus(painter, localOption, localOption.rect);
+	}
+};
+
+void OBSPropertiesView::AddDictionary(obs_property_t *prop,
+	QFormLayout *layout, QLabel *&label)
+{
+	const char       *name = obs_property_name(prop);
+	obs_data_t       *dictionary_data = obs_data_get_obj(settings, name);
+	QTableView       *table = new QTableView();
+
+	if (!obs_property_enabled(prop))
+		table->setEnabled(false);
+
+	table->setSortingEnabled(false);
+	table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	table->setToolTip(QT_UTF8(obs_property_long_description(prop)));
+	table->setEditTriggers(QAbstractItemView::AllEditTriggers);
+	table->setMinimumHeight(120);
+	table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+	table->verticalHeader()->setDefaultSectionSize(20);
+
+	table->setItemDelegateForColumn(1, new DictionaryItemTypeDelegate());
+	table->setItemDelegateForColumn(2, new DictionaryItemValueDelegate());
+
+	QStandardItemModel *tableModel = new QStandardItemModel(0, 3);
+	tableModel->setHorizontalHeaderLabels(QStringList( {
+		QTStr("Basic.PropertiesWindow.DictionaryEntryName"),
+		QTStr("Basic.PropertiesWindow.DictionaryEntryType"),
+		QTStr("Basic.PropertiesWindow.DictionaryEntryValue")
+	} ));
+
+	for (obs_data_item_t *item = obs_data_first(dictionary_data); item;
+		obs_data_item_next(&item)) {
+		int newRowIndex = tableModel->rowCount();
+		tableModel->insertRow(tableModel->rowCount());
+
+		obs_dictionary_entry_type type = obs_dictionary_get_type(item);
+		tableModel->setData(
+			tableModel->index(newRowIndex, DICTIONARY_COLUMN_NAME),
+			obs_data_item_get_name(item));
+		tableModel->setData(
+			tableModel->index(newRowIndex, DICTIONARY_COLUMN_TYPE), type);
+
+		QModelIndex valueIndex = tableModel->index(newRowIndex,
+			DICTIONARY_COLUMN_VALUE);
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_STRING:
+			tableModel->setData(valueIndex, obs_dictionary_get_string(item));
+			break;
+		case OBS_DICTIONARY_ENTRY_INT:
+			tableModel->setData(valueIndex, obs_dictionary_get_int(item));
+			break;
+		case OBS_DICTIONARY_ENTRY_FLOAT:
+			tableModel->setData(valueIndex, obs_dictionary_get_float(item));
+			break;
+		case OBS_DICTIONARY_ENTRY_BOOL:
+			tableModel->setData(valueIndex, obs_dictionary_get_bool(item));
+			break;
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			tableModel->setData(valueIndex, obs_dictionary_get_color(item));
+			break;
+		}
+	}
+
+	table->setModel(tableModel);
+
+	WidgetInfo *info = new WidgetInfo(this, prop, table);
+	tableModel->connect(
+		tableModel,
+		SIGNAL(dataChanged(const QModelIndex &, const QModelIndex &)),
+		info,
+		SLOT(DictionaryDataChanged(const QModelIndex &, const QModelIndex &)));
+
+	QVBoxLayout *sideLayout = new QVBoxLayout();
+	NewButton(sideLayout, info, "addIconSmall",
+		&WidgetInfo::DictionaryAdd);
+	NewButton(sideLayout, info, "removeIconSmall",
+		&WidgetInfo::DictionaryRemove);
+	sideLayout->addStretch(0);
+
+	QHBoxLayout *subLayout = new QHBoxLayout();
+	subLayout->addWidget(table);
+	subLayout->addLayout(sideLayout);
+
+	children.emplace_back(info);
+
+	label = new QLabel(QT_UTF8(obs_property_description(prop)));
+	layout->addRow(label, subLayout);
+}
+
 void OBSPropertiesView::AddProperty(obs_property_t *property,
 		QFormLayout *layout)
 {
@@ -1366,6 +1668,8 @@ void OBSPropertiesView::AddProperty(obs_property_t *property,
 	case OBS_PROPERTY_FRAME_RATE:
 		AddFrameRate(property, warning, layout, label);
 		break;
+	case OBS_PROPERTY_DICTIONARY:
+		AddDictionary(property, layout, label);
 	}
 
 	if (widget && !obs_property_enabled(property))
@@ -1701,6 +2005,51 @@ void WidgetInfo::EditableListChanged()
 	ControlChanged();
 }
 
+void WidgetInfo::DictionaryChanged()
+{
+	const char *setting = obs_property_name(property);
+	QTableView *table = reinterpret_cast<QTableView*>(widget);
+	QAbstractItemModel *model = table->model();
+	obs_data *data = obs_data_create();
+
+	for (int row = 0; row < model->rowCount(); row++)
+	{
+		QString name = model->data(model->index(row, DICTIONARY_COLUMN_NAME))
+			.toString();
+		obs_dictionary_entry_type type =
+			model->data(model->index(row, DICTIONARY_COLUMN_TYPE))
+			.value<obs_dictionary_entry_type>();
+		QVariant value = model->data(model->index(row,
+			DICTIONARY_COLUMN_VALUE));
+
+		obs_data_item_t *item = obs_dictionary_setup_entry(data,
+			qPrintable(name));
+
+		switch (type) {
+		case OBS_DICTIONARY_ENTRY_STRING:
+			obs_dictionary_set_string(item, qPrintable(value.toString()));
+			break;
+		case OBS_DICTIONARY_ENTRY_INT:
+			obs_dictionary_set_int(item, value.toInt());
+			break;
+		case OBS_DICTIONARY_ENTRY_FLOAT:
+			obs_dictionary_set_float(item, value.toFloat());
+			break;
+		case OBS_DICTIONARY_ENTRY_BOOL:
+			obs_dictionary_set_bool(item, value.toBool());
+			break;
+		case OBS_DICTIONARY_ENTRY_COLOR:
+			obs_dictionary_set_color(item, value.toInt());
+			break;
+		}
+	}
+
+	obs_data_set_obj(view->settings, setting, data);
+	obs_data_release(data);
+
+	ControlChanged();
+}
+
 void WidgetInfo::ButtonClicked()
 {
 	if (obs_property_button_clicked(property, view->obj)) {
@@ -1745,6 +2094,7 @@ void WidgetInfo::ControlChanged()
 		if (!FrameRateChanged(widget, setting, view->settings))
 			return;
 		break;
+	case OBS_PROPERTY_DICTIONARY: break;
 	}
 
 	if (view->callback && !view->deferUpdate)
@@ -2025,4 +2375,77 @@ void WidgetInfo::EditListDown()
 	}
 
 	EditableListChanged();
+}
+
+void WidgetInfo::DictionaryAdd()
+{
+	QTableView *table = static_cast<QTableView*>(widget);
+	QAbstractItemModel *tableModel = table->model();
+
+	int newRow = tableModel->rowCount();
+	tableModel->insertRow(newRow);
+	tableModel->setData(tableModel->index(newRow, DICTIONARY_COLUMN_TYPE),
+		OBS_DICTIONARY_ENTRY_STRING);
+
+	DictionaryChanged();
+}
+
+void WidgetInfo::DictionaryRemove()
+{
+	QTableView *table = static_cast<QTableView*>(widget);
+	QAbstractItemModel *tableModel = table->model();
+
+	QModelIndexList selectedRows = table->selectionModel()->selectedIndexes();
+	qSort(selectedRows);
+	for (auto iter = selectedRows.rbegin(); iter != selectedRows.rend();
+		iter++)
+	{
+		tableModel->removeRow(iter->row());
+	}
+
+	DictionaryChanged();
+}
+
+void WidgetInfo::DictionaryDataChanged(const QModelIndex &topLeft,
+	const QModelIndex &bottomRight)
+{
+	// If the range that was changed includes a type column, we convert the
+	// associated value column to the appropriate data type so the display
+	// updates to reflect that new type.
+	if (topLeft.column() <= DICTIONARY_COLUMN_TYPE &&
+		bottomRight.column() >= DICTIONARY_COLUMN_TYPE) {
+		QTableView *table = static_cast<QTableView*>(widget);
+		QAbstractItemModel *model = table->model();
+
+		for (int row = topLeft.row(); row <= bottomRight.row(); row++)
+		{
+			QModelIndex typeIndex = model->index(row, DICTIONARY_COLUMN_TYPE);
+			QModelIndex valueIndex = model->index(row, DICTIONARY_COLUMN_VALUE);
+			obs_dictionary_entry_type newType = model->data(typeIndex)
+				.value<obs_dictionary_entry_type>();
+			QVariant currentValue = model->data(valueIndex);
+			QVariant newValue;
+
+			switch (newType) {
+			case OBS_DICTIONARY_ENTRY_STRING:
+				newValue = currentValue.toString();
+				break;
+			case OBS_DICTIONARY_ENTRY_INT:
+			case OBS_DICTIONARY_ENTRY_COLOR:
+				newValue = currentValue.toInt();
+				break;
+			case OBS_DICTIONARY_ENTRY_FLOAT:
+				newValue = currentValue.toFloat();
+				break;
+			case OBS_DICTIONARY_ENTRY_BOOL:
+				newValue = currentValue.toBool();
+				break;
+			}
+
+			model->setData(valueIndex, newValue);
+		}
+
+	}
+
+	DictionaryChanged();
 }

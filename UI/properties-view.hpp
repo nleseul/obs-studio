@@ -5,9 +5,13 @@
 #include <vector>
 #include <memory>
 
+class QComboBox;
 class QFormLayout;
-class OBSPropertiesView;
+class QGridLayout;
 class QLabel;
+class QLineEdit;
+
+class OBSPropertiesView;
 
 typedef obs_properties_t *(*PropertiesReloadCallback)(void *obj);
 typedef void              (*PropertiesUpdateCallback)(void *obj,
@@ -34,6 +38,7 @@ private:
 	bool ColorChanged(const char *setting);
 	bool FontChanged(const char *setting);
 	void EditableListChanged();
+	void DictionaryChanged();
 	void ButtonClicked();
 
 	void TogglePasswordText(bool checked);
@@ -57,6 +62,12 @@ public slots:
 	void EditListEdit();
 	void EditListUp();
 	void EditListDown();
+
+	/* dictionary */
+	void DictionaryAdd();
+	void DictionaryRemove();
+	void DictionaryDataChanged(const QModelIndex &topLeft,
+		const QModelIndex &bottomRight);
 };
 
 /* ------------------------------------------------------------------------- */
@@ -102,6 +113,8 @@ private:
 	void AddFont(obs_property_t *prop, QFormLayout *layout, QLabel *&label);
 	void AddFrameRate(obs_property_t *prop, bool &warning,
 			QFormLayout *layout, QLabel *&label);
+	void AddDictionary(obs_property_t *prop, QFormLayout *layout,
+			QLabel *&label);
 
 	void AddProperty(obs_property_t *property, QFormLayout *layout);
 
