@@ -25,6 +25,8 @@
 #include <media-io/media-remux.h>
 #include <util/threading.h>
 
+class QStandardItem;
+class QStandardItemModel;
 class RemuxWorker;
 
 class OBSRemux : public QDialog {
@@ -37,9 +39,6 @@ class OBSRemux : public QDialog {
 
 	const char *recPath;
 
-	void BrowseInput();
-	void BrowseOutput();
-
 	bool Stop();
 
 	virtual void closeEvent(QCloseEvent *event) override;
@@ -51,8 +50,11 @@ public:
 
 	using job_t = std::shared_ptr<struct media_remux_job>;
 
+private:
+	QStandardItemModel *tableModel;
+
 private slots:
-	void inputChanged(const QString &str);
+	void inputCellChanged(QStandardItem *item);
 
 public slots:
 	void updateProgress(float percent);
