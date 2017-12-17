@@ -29,6 +29,18 @@ class QStandardItem;
 class QStandardItemModel;
 class RemuxWorker;
 
+enum RemuxEntryState
+{
+	Empty,
+	Ready,
+	Pending,
+	InProgress,
+	Complete,
+	InvalidPath,
+	Error
+};
+Q_DECLARE_METATYPE(RemuxEntryState);
+
 class OBSRemux : public QDialog {
 	Q_OBJECT
 
@@ -58,6 +70,7 @@ private slots:
 
 public slots:
 	void updateProgress(float percent);
+	void updateEntryState(int key, RemuxEntryState newState);
 	void remuxFinished(bool success);
 	void Remux();
 
@@ -68,7 +81,24 @@ signals:
 class RemuxWorker : public QObject {
 	Q_OBJECT
 
-	OBSRemux::job_t job;
+	struct JobInfo
+	{
+		int jobKey;
+
+		QString sourcePath;
+		QString targetPath;
+
+		JobInfo(int key, const QString &source, const QString &target)
+		: jobKey    (key),
+		  sourcePath(source),
+		  targetPath(target)
+		{
+
+		}
+	};
+
+	QList<JobInfo> jobQueue;
+
 	os_event_t *stop;
 
 	float lastProgress;
@@ -82,6 +112,7 @@ private slots:
 
 signals:
 	void updateProgress(float percent);
+	void updateEntryState(int key, RemuxEntryState newState);
 	void remuxFinished(bool success);
 
 	friend class OBSRemux;

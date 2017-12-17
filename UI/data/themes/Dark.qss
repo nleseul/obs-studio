@@ -477,7 +477,11 @@ QStatusBar::item {
     border: none;
 }
 
-/* Table Headers */
+/* Table View */
+
+QTableView {
+    gridline-color: rgb(88,87,88); /* kindaDark */
+}
 
 QHeaderView::section {
     background-color: rgb(58,57,58); /* dark */

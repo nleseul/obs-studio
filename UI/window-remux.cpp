@@ -28,6 +28,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QStandardItemModel>
+#include <QStyledItemDelegate>
 #include <QToolButton>
 
 #include "qt-wrappers.hpp"
@@ -37,24 +38,43 @@
 
 using namespace std;
 
-class RemuxPathItemDelegate : public QItemDelegate
+enum RemuxEntryColumn
+{
+	State,
+	InputPath,
+	OutputPath,
+
+	Count
+};
+
+class RemuxEntryStateItemDelegate : public QStyledItemDelegate
+{
+public:
+	virtual QWidget *createEditor(QWidget * /* parent */,
+		const QStyleOptionViewItem & /* option */,
+		const QModelIndex & /* index */) const override
+	{
+		return Q_NULLPTR;
+	}
+
+	virtual void paint(QPainter *painter,
+		const QStyleOptionViewItem &option,
+		const QModelIndex &index) const override
+	{
+		QStyleOptionViewItem localOption = option;
+		initStyleOption(&localOption, index);
+
+		QApplication::style()->drawControl(QStyle::CE_ItemViewItem,
+				&localOption, painter);
+	}
+};
+
+class RemuxEntryPathItemDelegate : public QStyledItemDelegate
 {
 public:
 
-	enum RemuxEntryState
-	{
-		EmptyInputPath,
-		ValidInputPath,
-		InvalidInputPath
-	};
-
-	enum RemuxPathRole
-	{
-		EntryStateRole = Qt::ItemDataRole::UserRole
-	};
-
-	RemuxPathItemDelegate(bool isOutput, const QString &defaultPath)
-		: QItemDelegate(),
+	RemuxEntryPathItemDelegate(bool isOutput, const QString &defaultPath)
+		: QStyledItemDelegate(),
 		  isOutput(isOutput),
 		  defaultPath(defaultPath)
 	{
@@ -65,13 +85,31 @@ public:
 			const QStyleOptionViewItem & /* option */,
 			const QModelIndex &index) const override
 	{
-		if (isOutput && index.data(EntryStateRole).toInt() != ValidInputPath)
-		{
+		RemuxEntryState state = index.model()
+				->index(index.row(), RemuxEntryColumn::State)
+				.data().value<RemuxEntryState>();
+		if (isOutput && state != Ready) {
 			return Q_NULLPTR;
 		}
-		else
-		{
+		else {
+			QSizePolicy buttonSizePolicy(
+					QSizePolicy::Policy::Minimum,
+					QSizePolicy::Policy::Expanding,
+					QSizePolicy::ControlType::PushButton);
+
 			QWidget *container = new QWidget(parent);
+
+			auto browseCallback = [this, container]()
+			{
+				const_cast<RemuxEntryPathItemDelegate *>(this)
+						->handleBrowse(container);
+			};
+
+			auto clearCallback = [this, container]()
+			{
+				const_cast<RemuxEntryPathItemDelegate *>(this)
+						->handleClear(container);
+			};
 
 			QHBoxLayout *layout = new QHBoxLayout();
 			layout->setMargin(0);
@@ -79,18 +117,33 @@ public:
 
 			QLineEdit *text = new QLineEdit();
 			text->setObjectName(QStringLiteral("text"));
-			text->setSizePolicy(QSizePolicy(QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Expanding, QSizePolicy::ControlType::LineEdit));
+			text->setSizePolicy(QSizePolicy(
+					QSizePolicy::Policy::Expanding,
+					QSizePolicy::Policy::Expanding,
+					QSizePolicy::ControlType::LineEdit));
 			layout->addWidget(text);
 
-			QToolButton *button = new QToolButton();
-			button->setText("...");
-			button->setSizePolicy(QSizePolicy(QSizePolicy::Policy::Minimum, QSizePolicy::Policy::Expanding, QSizePolicy::ControlType::PushButton));
-			layout->addWidget(button);
+			QToolButton *browseButton = new QToolButton();
+			browseButton->setText("...");
+			browseButton->setSizePolicy(buttonSizePolicy);
+			layout->addWidget(browseButton);
+
+			container->connect(browseButton, &QToolButton::clicked,
+					browseCallback);
+
+			if (!isOutput) {
+				QToolButton *clearButton = new QToolButton();
+				clearButton->setText("X");
+				clearButton->setSizePolicy(buttonSizePolicy);
+				layout->addWidget(clearButton);
+
+				container->connect(clearButton,
+						&QToolButton::clicked,
+						clearCallback);
+			}
 
 			container->setLayout(layout);
 			container->setFocusProxy(text);
-
-			container->connect(button, &QToolButton::clicked, [this, container]() { const_cast<RemuxPathItemDelegate *>(this)->handleBrowse(container); });
 
 			return container;
 		}
@@ -115,23 +168,25 @@ public:
 			const QStyleOptionViewItem &option,
 			const QModelIndex &index) const override
 	{
-		if (isOutput)
-		{
-			if (index.data(EntryStateRole) != ValidInputPath)
-			{
-				painter->fillRect(option.rect, option.palette.color(QPalette::ColorGroup::Disabled, QPalette::ColorRole::Background));
-			}
-		}
-		else
-		{
-			if (index.data(EntryStateRole) == InvalidInputPath)
-			{
-				painter->fillRect(option.rect, Qt::GlobalColor::red);
+		RemuxEntryState state = index.model()
+				->index(index.row(), RemuxEntryColumn::State)
+				.data().value<RemuxEntryState>();
+
+		QStyleOptionViewItem localOption = option;
+		initStyleOption(&localOption, index);
+
+		if (isOutput) {
+			if (state != Ready) {
+				QColor background = localOption.palette
+						.color(QPalette::ColorGroup::Disabled,
+						QPalette::ColorRole::Background);
+
+				localOption.backgroundBrush = QBrush(background);
 			}
 		}
 
-		drawDisplay(painter, option, option.rect, index.data().toString());
-		drawFocus(painter, option, option.rect);
+		QApplication::style()->drawControl(QStyle::CE_ItemViewItem,
+				&localOption, painter);
 	}
 
 private:
@@ -140,7 +195,8 @@ private:
 
 	void handleBrowse(QWidget *container)
 	{
-		static const QString RecordingPattern = "(*.flv *.mp4 *.mov *.mkv *.ts *.m3u8)";
+		static const QString RecordingPattern =
+				"(*.flv *.mp4 *.mov *.mkv *.ts *.m3u8)";
 
 		QLineEdit *text = container->findChild<QLineEdit *>();
 
@@ -149,22 +205,27 @@ private:
 			path = defaultPath;
 
 		if (isOutput)
-		{
-			path = QFileDialog::getSaveFileName(container, QTStr("Remux.SelectTarget"),
-				path, RecordingPattern);
-		}
+			path = QFileDialog::getSaveFileName(container,
+					QTStr("Remux.SelectTarget"),
+					path, RecordingPattern);
 		else
-		{
 			path = QFileDialog::getOpenFileName(container,
-				QTStr("Remux.SelectRecording"), path,
-				QTStr("Remux.OBSRecording") + QString(" ") +
-				RecordingPattern);
-		}
+					QTStr("Remux.SelectRecording"), path,
+					QTStr("Remux.OBSRecording")
+					+ QString(" ") + RecordingPattern);
 
 		if (path.isEmpty())
 			return;
 
 		text->setText(path);
+
+		emit commitData(container);
+	}
+
+	void handleClear(QWidget *container)
+	{
+		QLineEdit *text = container->findChild<QLineEdit *>();
+		text->clear();
 
 		emit commitData(container);
 	}
@@ -174,7 +235,7 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 	: QDialog    (parent),
 	  worker     (new RemuxWorker),
 	  ui         (new Ui::OBSRemux),
-	  tableModel (new QStandardItemModel(1, 2)),
+	  tableModel (new QStandardItemModel(1, RemuxEntryColumn::Count)),
 	  recPath    (path)
 {
 	ui->setupUi(this);
@@ -187,15 +248,31 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 	ui->progressBar->setMaximum(1000);
 	ui->progressBar->setValue(0);
 
-	tableModel->setHeaderData(0, Qt::Orientation::Horizontal, QTStr("Remux.SourceFile"));
-	tableModel->setHeaderData(1, Qt::Orientation::Horizontal, QTStr("Remux.TargetFile"));
+	tableModel->setHeaderData(RemuxEntryColumn::State,
+			Qt::Orientation::Horizontal, "");
+	tableModel->setHeaderData(RemuxEntryColumn::InputPath,
+			Qt::Orientation::Horizontal,
+			QTStr("Remux.SourceFile"));
+	tableModel->setHeaderData(RemuxEntryColumn::OutputPath,
+			Qt::Orientation::Horizontal,
+			QTStr("Remux.TargetFile"));
 	ui->tableView->setModel(tableModel);
-	ui->tableView->setItemDelegateForColumn(0, new RemuxPathItemDelegate(false, recPath));
-	ui->tableView->setItemDelegateForColumn(1, new RemuxPathItemDelegate(true, recPath));
-	ui->tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeMode::Stretch);
-	ui->tableView->setEditTriggers(QAbstractItemView::EditTrigger::CurrentChanged);
+	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::State,
+			new RemuxEntryStateItemDelegate());
+	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::InputPath,
+			new RemuxEntryPathItemDelegate(false, recPath));
+	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::OutputPath,
+			new RemuxEntryPathItemDelegate(true, recPath));
+	ui->tableView->horizontalHeader()->setSectionResizeMode(
+			QHeaderView::ResizeMode::Stretch);
+	ui->tableView->horizontalHeader()->setSectionResizeMode(
+			RemuxEntryColumn::State,
+			QHeaderView::ResizeMode::Fixed);
+	ui->tableView->setEditTriggers(
+			QAbstractItemView::EditTrigger::CurrentChanged);
 
-	connect(tableModel, SIGNAL(itemChanged(QStandardItem*)), this, SLOT(inputCellChanged(QStandardItem*)));
+	connect(tableModel, SIGNAL(itemChanged(QStandardItem*)),
+			this, SLOT(inputCellChanged(QStandardItem*)));
 
 	installEventFilter(CreateShortcutFilter());
 
@@ -215,6 +292,8 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 	RemuxWorker *worker_ = worker;
 	connect(worker_, &RemuxWorker::updateProgress,
 			this, &OBSRemux::updateProgress);
+	connect(worker_, &RemuxWorker::updateEntryState,
+			this, &OBSRemux::updateEntryState);
 	connect(&remuxer, &QThread::finished, worker_, &QObject::deleteLater);
 	connect(worker_, &RemuxWorker::remuxFinished,
 			this, &OBSRemux::remuxFinished);
@@ -223,15 +302,15 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 
 bool OBSRemux::Stop()
 {
-	if (!worker->job)
+	if (worker->jobQueue.empty())
 		return true;
 
 	if (QMessageBox::critical(nullptr,
-				QTStr("Remux.ExitUnfinishedTitle"),
-				QTStr("Remux.ExitUnfinished"),
-				QMessageBox::Yes | QMessageBox::No,
-				QMessageBox::No) ==
-			QMessageBox::Yes) {
+		QTStr("Remux.ExitUnfinishedTitle"),
+		QTStr("Remux.ExitUnfinished"),
+		QMessageBox::Yes | QMessageBox::No,
+		QMessageBox::No) ==
+		QMessageBox::Yes) {
 		os_event_signal(worker->stop);
 		return true;
 	}
@@ -248,63 +327,89 @@ OBSRemux::~OBSRemux()
 
 void OBSRemux::inputCellChanged(QStandardItem *item)
 {
-	if (item->index().column() == 0)
+	if (item->index().column() == RemuxEntryColumn::InputPath)
 	{
-		QModelIndex outputIndex = tableModel->index(item->index().row(), 1);
-		QFileInfo fi(tableModel->data(item->index()).toString());
+		QModelIndex stateIndex = tableModel->index(item->index().row(),
+				RemuxEntryColumn::State);
+		QString path = tableModel->data(item->index()).toString();
 
-		RemuxPathItemDelegate::RemuxEntryState entryState;
-		if (fi.path().isEmpty())
-		{
-			entryState = RemuxPathItemDelegate::RemuxEntryState::EmptyInputPath;
+		if (path.isEmpty()) {
+			// If we just blanked the input path and this was not
+			// the empty row at the end of the list, remove it.
+			if (item->index().row() < tableModel->rowCount() - 1)
+				tableModel->removeRow(item->index().row());
 		}
-		else if (fi.exists())
-		{
-			entryState = RemuxPathItemDelegate::RemuxEntryState::ValidInputPath;
+		else {
+			QFileInfo fi(path);
+
+			RemuxEntryState entryState;
+			if (path.isEmpty())
+				entryState = RemuxEntryState::Empty;
+			else if (fi.exists())
+				entryState = RemuxEntryState::Ready;
+			else
+				entryState = RemuxEntryState::InvalidPath;
+
+			tableModel->setData(stateIndex, entryState);
+
+			if (fi.exists()) {
+				QModelIndex outputIndex = tableModel->index(
+						item->index().row(),
+						RemuxEntryColumn::OutputPath);
+				QString outputPath = fi.path() + "/"
+						+ fi.baseName() + ".mp4";
+
+				tableModel->setData(outputIndex, outputPath);
+			}
+
+			// After this change, see if the last item in the list
+			// is still empty. If it isn't, add a new empty row at
+			// the end.
+			QModelIndex lastItemIndex = tableModel->index(
+					tableModel->rowCount() - 1,
+					RemuxEntryColumn::InputPath);
+			if (tableModel->data(lastItemIndex).toString().length()
+					> 0)
+				tableModel->appendRow(nullptr);
 		}
-		else
-		{
-			entryState = RemuxPathItemDelegate::RemuxEntryState::InvalidInputPath;
-		}
 
-		tableModel->setData(item->index(), entryState, RemuxPathItemDelegate::RemuxPathRole::EntryStateRole);
-		tableModel->setData(outputIndex, entryState, RemuxPathItemDelegate::RemuxPathRole::EntryStateRole);
-
-		if (fi.exists())
-		{
-			QString outputPath = fi.path() + "/" + fi.baseName() + ".mp4";
-
-			tableModel->setData(outputIndex, outputPath);
-
+		// Now, see if there are still any rows ready to remux. Change
+		// the state of the "go" button accordingly.
+		// There must be more than one row, since there will always be
+		// at least one row for the empty insertion point.
+		if (tableModel->rowCount() > 1)
 			ui->buttonBox->button(QDialogButtonBox::Ok)->
 				setEnabled(true);
-		}
 		else
-		{
 			ui->buttonBox->button(QDialogButtonBox::Ok)->
 				setEnabled(false);
-		}
-
 	}
 }
 
 void OBSRemux::Remux()
 {
-	QString sourcePath = tableModel->index(0, 0).data().toString();
-	QString targetPath = tableModel->index(0, 1).data().toString();
+	worker->jobQueue.clear();
 
-	if (QFileInfo::exists(targetPath))
+	for (int row = 0; row < tableModel->rowCount() - 1; row++) {
+		if (tableModel->index(row, RemuxEntryColumn::State)
+				.data().value<RemuxEntryState>()
+				== RemuxEntryState::Ready) {
+			QString sourcePath = tableModel->index(row, RemuxEntryColumn::InputPath).data().toString();
+			QString targetPath = tableModel->index(row, RemuxEntryColumn::OutputPath).data().toString();
+
+			worker->jobQueue.append(RemuxWorker::JobInfo(row, sourcePath, targetPath));
+		}
+	}
+
+	if (worker->jobQueue.empty())
+		return;
+
+	/*if (QFileInfo::exists(targetPath))
 		if (OBSMessageBox::question(this, QTStr("Remux.FileExistsTitle"),
 					QTStr("Remux.FileExists")) !=
 				QMessageBox::Yes)
-			return;
+			return;*/
 
-	media_remux_job_t mr_job = nullptr;
-	if (!media_remux_job_create(&mr_job, QT_TO_UTF8(sourcePath),
-				QT_TO_UTF8(targetPath)))
-		return;
-
-	worker->job = job_t(mr_job, media_remux_job_destroy);
 	worker->lastProgress = 0.f;
 
 	ui->progressBar->setVisible(true);
@@ -335,13 +440,20 @@ void OBSRemux::updateProgress(float percent)
 	ui->progressBar->setValue(percent * 10);
 }
 
+void OBSRemux::updateEntryState(int key, RemuxEntryState state)
+{
+	QModelIndex stateIndex = tableModel->index(key, RemuxEntryColumn::State);
+	tableModel->setData(stateIndex, state);
+}
+
 void OBSRemux::remuxFinished(bool success)
 {
+	worker->jobQueue.clear();
+
 	OBSMessageBox::information(this, QTStr("Remux.FinishedTitle"),
 			success ?
 			QTStr("Remux.Finished") : QTStr("Remux.FinishedError"));
 
-	worker->job.reset();
 	ui->progressBar->setVisible(false);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(true);
@@ -368,6 +480,8 @@ void RemuxWorker::UpdateProgress(float percent)
 
 void RemuxWorker::remux()
 {
+	bool allSuccessful = true;
+
 	auto callback = [](void *data, float percent)
 	{
 		auto rw = static_cast<RemuxWorker*>(data);
@@ -375,7 +489,36 @@ void RemuxWorker::remux()
 		return !!os_event_try(rw->stop);
 	};
 
-	bool success = media_remux_job_process(job.get(), callback, this);
+	// Set all jobs to "pending" first.
+	for (JobInfo jobInfo : jobQueue)
+		emit updateEntryState(jobInfo.jobKey,
+				RemuxEntryState::Pending);
 
-	emit remuxFinished(os_event_try(stop) && success);
+	for (JobInfo jobInfo : jobQueue) {
+
+		emit updateEntryState(jobInfo.jobKey,
+				RemuxEntryState::InProgress);
+
+		bool success = false;
+
+		media_remux_job_t mr_job = nullptr;
+		if (media_remux_job_create(&mr_job,
+					QT_TO_UTF8(jobInfo.sourcePath),
+					QT_TO_UTF8(jobInfo.targetPath))) {
+
+			success = media_remux_job_process(mr_job, callback,
+					this);
+
+			media_remux_job_destroy(mr_job);
+		}
+
+		if (success)
+			emit updateEntryState(jobInfo.jobKey, RemuxEntryState::Complete);
+		else
+			emit updateEntryState(jobInfo.jobKey, RemuxEntryState::Error);
+
+		allSuccessful |= success;
+	}
+
+	emit remuxFinished(os_event_try(stop) && allSuccessful);
 }
