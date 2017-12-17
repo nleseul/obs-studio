@@ -25,6 +25,7 @@
 #include <QItemDelegate>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
 #include <QStandardItemModel>
@@ -238,6 +239,8 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 	  tableModel (new QStandardItemModel(1, RemuxEntryColumn::Count)),
 	  recPath    (path)
 {
+	setAcceptDrops(true);
+
 	ui->setupUi(this);
 
 	ui->progressBar->setVisible(false);
@@ -386,35 +389,72 @@ void OBSRemux::inputCellChanged(QStandardItem *item)
 	}
 }
 
+void OBSRemux::dropEvent(QDropEvent *ev)
+{
+	for (QUrl url : ev->mimeData()->urls()) {
+
+		int newRow = tableModel->rowCount() - 1;
+		tableModel->insertRow(newRow);
+
+		tableModel->setData(
+			tableModel->index(newRow, RemuxEntryColumn::State),
+			RemuxEntryState::Ready);
+
+		tableModel->setData(
+			tableModel->index(newRow, RemuxEntryColumn::InputPath),
+			url.toLocalFile());
+	}
+}
+
+void OBSRemux::dragEnterEvent(QDragEnterEvent *ev)
+{
+	if (ev->mimeData()->hasUrls())
+		ev->accept();
+}
+
 void OBSRemux::Remux()
 {
+	bool proceedWithRemux = false;
 	worker->jobQueue.clear();
 
 	for (int row = 0; row < tableModel->rowCount() - 1; row++) {
 		if (tableModel->index(row, RemuxEntryColumn::State)
 				.data().value<RemuxEntryState>()
 				== RemuxEntryState::Ready) {
-			QString sourcePath = tableModel->index(row, RemuxEntryColumn::InputPath).data().toString();
-			QString targetPath = tableModel->index(row, RemuxEntryColumn::OutputPath).data().toString();
 
-			worker->jobQueue.append(RemuxWorker::JobInfo(row, sourcePath, targetPath));
+			QString sourcePath = tableModel
+					->index(row, RemuxEntryColumn::InputPath)
+					.data().toString();
+			QString targetPath = tableModel
+					->index(row, RemuxEntryColumn::OutputPath)
+					.data().toString();
+
+			if (QFileInfo::exists(targetPath)) {
+				if (OBSMessageBox::question(this,
+						QTStr("Remux.FileExistsTitle"),
+						QTStr("Remux.FileExists")
+						.arg(targetPath))
+						!= QMessageBox::Yes) {
+					proceedWithRemux = false;
+					break;
+				}
+			}
+
+			worker->jobQueue.append(RemuxWorker::JobInfo(row,
+					sourcePath, targetPath));
+			proceedWithRemux = true;
 		}
 	}
 
-	if (worker->jobQueue.empty())
+	if (!proceedWithRemux)
 		return;
-
-	/*if (QFileInfo::exists(targetPath))
-		if (OBSMessageBox::question(this, QTStr("Remux.FileExistsTitle"),
-					QTStr("Remux.FileExists")) !=
-				QMessageBox::Yes)
-			return;*/
 
 	worker->lastProgress = 0.f;
 
 	ui->progressBar->setVisible(true);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(false);
+	setAcceptDrops(false);
 
 	emit remux();
 }
@@ -457,6 +497,7 @@ void OBSRemux::remuxFinished(bool success)
 	ui->progressBar->setVisible(false);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(true);
+	setAcceptDrops(false);
 }
 
 RemuxWorker::RemuxWorker()

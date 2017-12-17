@@ -62,6 +62,10 @@ public:
 
 	using job_t = std::shared_ptr<struct media_remux_job>;
 
+protected:
+	void dropEvent(QDropEvent *ev);
+	void dragEnterEvent(QDragEnterEvent *ev);
+
 private:
 	QStandardItemModel *tableModel;
 
