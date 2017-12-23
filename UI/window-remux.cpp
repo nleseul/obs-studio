@@ -48,7 +48,7 @@ enum RemuxEntryColumn
 	Count
 };
 
-class RemuxEntryStateItemDelegate : public QStyledItemDelegate
+class ReadOnlyItemDelegate : public QStyledItemDelegate
 {
 public:
 	virtual QWidget *createEditor(QWidget * /* parent */,
@@ -56,17 +56,6 @@ public:
 		const QModelIndex & /* index */) const override
 	{
 		return Q_NULLPTR;
-	}
-
-	virtual void paint(QPainter *painter,
-		const QStyleOptionViewItem &option,
-		const QModelIndex &index) const override
-	{
-		QStyleOptionViewItem localOption = option;
-		initStyleOption(&localOption, index);
-
-		QApplication::style()->drawControl(QStyle::CE_ItemViewItem,
-				&localOption, painter);
 	}
 };
 
@@ -88,7 +77,7 @@ public:
 	{
 		RemuxEntryState state = index.model()
 				->index(index.row(), RemuxEntryColumn::State)
-				.data().value<RemuxEntryState>();
+				.data(Qt::UserRole).value<RemuxEntryState>();
 		if (isOutput && state != Ready) {
 			return Q_NULLPTR;
 		}
@@ -171,7 +160,7 @@ public:
 	{
 		RemuxEntryState state = index.model()
 				->index(index.row(), RemuxEntryColumn::State)
-				.data().value<RemuxEntryState>();
+				.data(Qt::UserRole).value<RemuxEntryState>();
 
 		QStyleOptionViewItem localOption = option;
 		initStyleOption(&localOption, index);
@@ -261,7 +250,7 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 			QTStr("Remux.TargetFile"));
 	ui->tableView->setModel(tableModel);
 	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::State,
-			new RemuxEntryStateItemDelegate());
+			new ReadOnlyItemDelegate());
 	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::InputPath,
 			new RemuxEntryPathItemDelegate(false, recPath));
 	ui->tableView->setItemDelegateForColumn(RemuxEntryColumn::OutputPath,
@@ -332,8 +321,6 @@ void OBSRemux::inputCellChanged(QStandardItem *item)
 {
 	if (item->index().column() == RemuxEntryColumn::InputPath)
 	{
-		QModelIndex stateIndex = tableModel->index(item->index().row(),
-				RemuxEntryColumn::State);
 		QString path = tableModel->data(item->index()).toString();
 
 		if (path.isEmpty()) {
@@ -353,7 +340,7 @@ void OBSRemux::inputCellChanged(QStandardItem *item)
 			else
 				entryState = RemuxEntryState::InvalidPath;
 
-			tableModel->setData(stateIndex, entryState);
+			updateEntryState(item->index().row(), entryState);
 
 			if (fi.exists()) {
 				QModelIndex outputIndex = tableModel->index(
@@ -397,10 +384,6 @@ void OBSRemux::dropEvent(QDropEvent *ev)
 		tableModel->insertRow(newRow);
 
 		tableModel->setData(
-			tableModel->index(newRow, RemuxEntryColumn::State),
-			RemuxEntryState::Ready);
-
-		tableModel->setData(
 			tableModel->index(newRow, RemuxEntryColumn::InputPath),
 			url.toLocalFile());
 	}
@@ -419,7 +402,7 @@ void OBSRemux::Remux()
 
 	for (int row = 0; row < tableModel->rowCount() - 1; row++) {
 		if (tableModel->index(row, RemuxEntryColumn::State)
-				.data().value<RemuxEntryState>()
+				.data(Qt::UserRole).value<RemuxEntryState>()
 				== RemuxEntryState::Ready) {
 
 			QString sourcePath = tableModel
@@ -483,7 +466,35 @@ void OBSRemux::updateProgress(float percent)
 void OBSRemux::updateEntryState(int key, RemuxEntryState state)
 {
 	QModelIndex stateIndex = tableModel->index(key, RemuxEntryColumn::State);
-	tableModel->setData(stateIndex, state);
+	tableModel->setData(stateIndex, state, Qt::UserRole);
+
+	QVariant icon;
+	QStyle *style = QApplication::style();
+
+	switch (state)
+	{
+		case RemuxEntryState::Complete:
+			icon = style->standardIcon(
+					QStyle::SP_DialogApplyButton);
+			break;
+
+		case RemuxEntryState::InProgress:
+			icon = style->standardIcon(
+					QStyle::SP_ArrowRight);
+			break;
+
+		case RemuxEntryState::Error:
+			icon = style->standardIcon(
+					QStyle::SP_DialogCancelButton);
+			break;
+
+		case RemuxEntryState::InvalidPath:
+			icon = style->standardIcon(
+					QStyle::SP_MessageBoxWarning);
+			break;
+	}
+
+	tableModel->setData(stateIndex, icon, Qt::DecorationRole);
 }
 
 void OBSRemux::remuxFinished(bool success)
