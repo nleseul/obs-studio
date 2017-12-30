@@ -437,6 +437,7 @@ void OBSRemux::Remux()
 	ui->progressBar->setVisible(true);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(false);
+	ui->tableView->setEnabled(false);
 	setAcceptDrops(false);
 
 	emit remux();
@@ -508,6 +509,7 @@ void OBSRemux::remuxFinished(bool success)
 	ui->progressBar->setVisible(false);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(true);
+	ui->tableView->setEnabled(true);
 	setAcceptDrops(false);
 }
 
