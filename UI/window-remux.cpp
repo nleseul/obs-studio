@@ -415,7 +415,7 @@ void OBSRemux::Remux()
 			if (QFileInfo::exists(targetPath)) {
 				if (OBSMessageBox::question(this,
 						QTStr("Remux.FileExistsTitle"),
-						QTStr("Remux.FileExists")
+						QTStr("Remux.FileExistsWithPath")
 						.arg(targetPath))
 						!= QMessageBox::Yes) {
 					proceedWithRemux = false;
