@@ -270,12 +270,15 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setText(QTStr("Remux.Remux"));
+	ui->buttonBox->button(QDialogButtonBox::Reset)->
+			setText(QTStr("Remux.ClearFinished"));
 
 	connect(ui->buttonBox->button(QDialogButtonBox::Ok),
 		SIGNAL(clicked()), this, SLOT(Remux()));
-
 	connect(ui->buttonBox->button(QDialogButtonBox::Close),
 		SIGNAL(clicked()), this, SLOT(close()));
+	connect(ui->buttonBox->button(QDialogButtonBox::Reset),
+		SIGNAL(clicked()), this, SLOT(clearFinished()));
 
 	worker->moveToThread(&remuxer);
 	remuxer.start();
@@ -511,6 +514,18 @@ void OBSRemux::remuxFinished(bool success)
 			setEnabled(true);
 	ui->tableView->setEnabled(true);
 	setAcceptDrops(false);
+}
+
+void OBSRemux::clearFinished()
+{
+	for (int row = 0; row < tableModel->rowCount() - 1; row++) {
+		if (tableModel->index(row, RemuxEntryColumn::State)
+				.data(Qt::UserRole).value<RemuxEntryState>()
+				== RemuxEntryState::Complete) {
+			tableModel->removeRow(row);
+			row--;
+		}
+	}
 }
 
 RemuxWorker::RemuxWorker()

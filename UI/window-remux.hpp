@@ -77,6 +77,7 @@ public slots:
 	void updateEntryState(int key, RemuxEntryState newState);
 	void remuxFinished(bool success);
 	void Remux();
+	void clearFinished();
 
 signals:
 	void remux();
