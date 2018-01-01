@@ -272,6 +272,8 @@ OBSRemux::OBSRemux(const char *path, QWidget *parent)
 			setText(QTStr("Remux.Remux"));
 	ui->buttonBox->button(QDialogButtonBox::Reset)->
 			setText(QTStr("Remux.ClearFinished"));
+	ui->buttonBox->button(QDialogButtonBox::Reset)->
+			setDisabled(true);
 
 	connect(ui->buttonBox->button(QDialogButtonBox::Ok),
 		SIGNAL(clicked()), this, SLOT(Remux()));
@@ -300,17 +302,40 @@ bool OBSRemux::Stop()
 	if (worker->jobQueue.empty())
 		return true;
 
+	// Flag the worker thread to suspend its processing while the modal
+	// dialog is shown.
+	os_event_signal(worker->wait);
+
+	bool exit = false;
+
 	if (QMessageBox::critical(nullptr,
-		QTStr("Remux.ExitUnfinishedTitle"),
-		QTStr("Remux.ExitUnfinished"),
-		QMessageBox::Yes | QMessageBox::No,
-		QMessageBox::No) ==
-		QMessageBox::Yes) {
-		os_event_signal(worker->stop);
-		return true;
+			QTStr("Remux.ExitUnfinishedTitle"),
+			QTStr("Remux.ExitUnfinished"),
+			QMessageBox::Yes | QMessageBox::No,
+			QMessageBox::No) ==
+			QMessageBox::Yes) {
+		exit = true;
 	}
 
-	return false;
+	if (exit)
+	{
+		// If the dialog result requests that the job be stopped,
+		// we flag the worker thread to stop, then reset the wait
+		// flag so it can continue until it does so.
+		os_event_signal(worker->stop);
+		os_event_reset(worker->wait);
+
+		// And, finally, clear out all the pending jobs so future calls
+		// to Stop() will just succeed silently.
+		worker->jobQueue.clear();
+	}
+	else
+	{
+		// Otherwise, we just direct the worker to go on as planned.
+		os_event_reset(worker->wait);
+	}
+
+	return exit;
 }
 
 OBSRemux::~OBSRemux()
@@ -509,11 +534,22 @@ void OBSRemux::remuxFinished(bool success)
 			success ?
 			QTStr("Remux.Finished") : QTStr("Remux.FinishedError"));
 
+	bool anyFinished = false;
+	for (int row = 0; row < tableModel->rowCount() - 1; row++) {
+		if (tableModel->index(row, RemuxEntryColumn::State)
+				.data(Qt::UserRole).value<RemuxEntryState>()
+				== RemuxEntryState::Complete) {
+			anyFinished = true;
+		}
+	}
+
 	ui->progressBar->setVisible(false);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->
 			setEnabled(true);
+	ui->buttonBox->button(QDialogButtonBox::Reset)->
+			setEnabled(anyFinished);
 	ui->tableView->setEnabled(true);
-	setAcceptDrops(false);
+	setAcceptDrops(true);
 }
 
 void OBSRemux::clearFinished()
@@ -526,16 +562,21 @@ void OBSRemux::clearFinished()
 			row--;
 		}
 	}
+
+	ui->buttonBox->button(QDialogButtonBox::Reset)->
+			setEnabled(false);
 }
 
 RemuxWorker::RemuxWorker()
 {
 	os_event_init(&stop, OS_EVENT_TYPE_MANUAL);
+	os_event_init(&wait, OS_EVENT_TYPE_MANUAL);
 }
 
 RemuxWorker::~RemuxWorker()
 {
 	os_event_destroy(stop);
+	os_event_destroy(wait);
 }
 
 void RemuxWorker::UpdateProgress(float percent)
@@ -555,6 +596,13 @@ void RemuxWorker::remux()
 	{
 		auto rw = static_cast<RemuxWorker*>(data);
 		rw->UpdateProgress(percent);
+
+		// Suspend as long as the wait flag is set.
+		while (os_event_try(rw->wait) != EAGAIN)
+		{
+			QThread::msleep(500);
+		}
+
 		return !!os_event_try(rw->stop);
 	};
 
@@ -562,6 +610,8 @@ void RemuxWorker::remux()
 	for (JobInfo jobInfo : jobQueue)
 		emit updateEntryState(jobInfo.jobKey,
 				RemuxEntryState::Pending);
+
+	bool stopped = false;
 
 	for (JobInfo jobInfo : jobQueue) {
 
@@ -587,7 +637,13 @@ void RemuxWorker::remux()
 			emit updateEntryState(jobInfo.jobKey, RemuxEntryState::Error);
 
 		allSuccessful |= success;
+
+		if (os_event_try(stop) != EAGAIN)
+		{
+			stopped = true;
+			break;
+		}
 	}
 
-	emit remuxFinished(os_event_try(stop) && allSuccessful);
+	emit remuxFinished(!stopped && allSuccessful);
 }

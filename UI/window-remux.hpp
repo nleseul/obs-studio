@@ -104,6 +104,7 @@ class RemuxWorker : public QObject {
 
 	QList<JobInfo> jobQueue;
 
+	os_event_t *wait;
 	os_event_t *stop;
 
 	float lastProgress;
