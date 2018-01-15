@@ -81,6 +81,9 @@ public:
 		if (isOutput && state != Ready) {
 			return Q_NULLPTR;
 		}
+		else if (!isOutput && state == Complete) {
+			return Q_NULLPTR;
+		}
 		else {
 			QSizePolicy buttonSizePolicy(
 					QSizePolicy::Policy::Minimum,
