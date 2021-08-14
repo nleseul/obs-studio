@@ -80,18 +80,45 @@ static void scale_filter_update(void *data, obs_data_t *settings)
 		filter->cx_in = ovi.base_width;
 		filter->cy_in = ovi.base_height;
 	} else {
-		ret = sscanf(res_str, "%dx%d", &filter->cx_in, &filter->cy_in);
-		if (ret == 2) {
-			filter->aspect_ratio_only = false;
-		} else {
+		bool scanned = false;
+
+		// Check for exact measurements.
+		if (!scanned) {
+			ret = sscanf(res_str, "%dx%d", &filter->cx_in,
+				     &filter->cy_in);
+			if (ret == 2) {
+				filter->aspect_ratio_only = false;
+				scanned = true;
+			}
+		}
+
+		// Check for a relative multiplier.
+		if (!scanned) {
+			float factor = 1.0f;
+			ret = sscanf(res_str, "x%f", &factor);
+			if (ret == 1) {
+				struct obs_video_info ovi;
+				obs_get_video_info(&ovi);
+				filter->aspect_ratio_only = false;
+				filter->cx_in = (int)(ovi.base_width * factor);
+				filter->cy_in = (int)(ovi.base_height * factor);
+
+				scanned = true;
+			}
+		}
+
+		// Check for an aspect ratio.
+		if (!scanned) {
 			ret = sscanf(res_str, "%d:%d", &filter->cx_in,
 				     &filter->cy_in);
-			if (ret != 2) {
-				filter->valid = false;
-				return;
+			if (ret == 2) {
+				filter->aspect_ratio_only = true;
+				scanned = true;
 			}
+		}
 
-			filter->aspect_ratio_only = true;
+		if (!scanned) {
+			filter->valid = false;
 		}
 	}
 
